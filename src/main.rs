@@ -1,10 +1,17 @@
-use std::net::TcpListener;
+use std::env;
+use std::net::{SocketAddr, TcpListener};
 use std::thread::spawn;
 use tungstenite::{accept, Message};
 
 /// A WebSocket echo server
 fn main () {
-    let server = TcpListener::bind("127.0.0.1:443").unwrap();
+    let port = env::var("PORT").expect("No PORT variable present!").parse().unwrap();
+
+    let server = TcpListener::bind(SocketAddr::from((
+        [0, 0, 0, 0], port
+    ))).unwrap();
+
+    println!("Listening on port {}!", port);
 
     for stream in server.incoming() {
         spawn (move || {
