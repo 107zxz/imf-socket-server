@@ -1,30 +1,44 @@
 use std::{env, fs};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::hash::Hash;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::{Arc};
 
 use futures_util::{future, SinkExt, StreamExt, TryStreamExt};
 use futures_util::lock::Mutex;
+use futures_util::stream::TryChunks;
 use log::{error, info};
 use regex::Regex;
 use serde::{Deserialize, Deserializer};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, tcp::WriteHalf};
+use tokio::net::tcp::ReadHalf;
 use tokio_tungstenite::tungstenite::{Message};
+use tokio_tungstenite::WebSocketStream;
 
 
 #[derive(Deserialize)]
-struct ServerContext {
+struct ServerConfig {
     default_port: u16,
     username_regex: String,
+}
 
-    #[serde(default)]
-    name_index_offset: usize,
+struct ServerContext {
+    config: ServerConfig,
+    streams: HashMap<u32, Arc<Mutex<TcpStream>>>
+}
 
-    #[serde(default)]
-    connected_players: HashSet<String>
+impl ServerContext {
+    fn new() -> Self {
+        Self {
+            config: serde_yaml::from_str(
+                &fs::read_to_string("config.yml").unwrap()
+            ).unwrap(),
+            streams: HashMap::new()
+        }
+    }
 }
 
 
@@ -32,16 +46,12 @@ struct ServerContext {
 async fn main() {
     let _ = env_logger::try_init();
 
-    // Load server config to context
-    let ctx: ServerContext = serde_yaml::from_str(
-        &fs::read_to_string("config.yml").unwrap()
-    ).unwrap();
-
+    let ctx = ServerContext::new();
 
     // Create the event loop and TCP listener we'll accept connections on.
     let port = match env::var("PORT") {
         Ok(port_str) => port_str.parse().unwrap(),
-        Err(_) => ctx.default_port
+        Err(_) => ctx.config.default_port
     };
 
     let addr = SocketAddr::from((
@@ -56,11 +66,40 @@ async fn main() {
     // Async multithreading my beloved
     let ctx_ref = Arc::new(Mutex::new(ctx));
 
+    // Track here: List of sending sockets. Each sending socket can be snapped up by mutex.
+    // Each socket now has a unique ID that will be used to identify its sending stream
+    // let sending_sockets: Arc<Mutex<HashMap<u32, TcpStream>>> = Arc::new(Mutex::new(HashMap::new()));
+    //
+    let mut next_key = 0;
+
+    // Accept connections: This is what the main thread must do...
     while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(accept_connection(stream, ctx_ref.clone()));
+
+        // Save the TcpStream for future use by all threads
+        {
+            let mut ctx = ctx_ref.lock().await;
+            (*ctx).streams.insert(next_key, Arc::new(Mutex::new(stream)));
+        }
+
+        tokio::spawn(accept_connection(next_key, ctx_ref.clone()));
     }
 }
 
+// Each socket should be stored with their own mutexes and only used when comm is necessary.
+// Unsure how this would interact with polling / reading
+async fn accept_connection(socket_key: u32, context: Arc<Mutex<ServerContext>>) {
+    let mut ws_stream = tokio_tungstenite::accept_async(stream)
+        .await?;
+
+    info!("New WebSocket connection: {}", addr);
+
+    let mut connection_state = ConnectionState::new();
+
+    while let Some(mr) = ws_stream.next().await {}
+    }
+}
+
+/*
 struct ConnectionState {
     player_name: Option<String>
 }
@@ -191,3 +230,4 @@ async fn accept_connection(stream: TcpStream, ctx_arc: Arc<Mutex<ServerContext>>
     }
     Ok(())
 }
+ */
