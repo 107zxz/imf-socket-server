@@ -3,4 +3,4 @@
 default_port: 9081
 
 # Regex to validate usernames against
-username_regex: r"^[\w ,\-']{1,20}$"
+username_regex: "^[\\w ,\\-']{1,20}$"
